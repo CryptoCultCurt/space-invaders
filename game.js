@@ -1,4 +1,5 @@
 import { getHighScores, addHighScore } from './supabase.js';
+import { SoundEffects } from './sounds.js';
 
 class Game {
     constructor() {
@@ -110,6 +111,8 @@ class Game {
     
     async loadHighScores() {
         this.highScores = await getHighScores();
+        console.log('Loaded high scores:', this.highScores);
+        // The date formatting is now handled in the supabase.js file
     }
 
     initializeGame() {
@@ -340,19 +343,39 @@ class Game {
             this.gameOver = true;
             this.sounds.play('gameOver');
             this.gameOverDisplayed = true;
+            const finalScore = this.score; // Store the final score
             if (this.checkHighScore()) {
                 this.enteringInitials = true;
+                this.currentInitials = '';
             } else {
                 this.showHighScores = true;
             }
             return;
         }
 
-        // Start explosion sequence
+        // Player explosion animation
         this.isExploding = true;
-        this.explosionTimer = this.explosionDuration;
-        this.createExplosionParticles();
+        this.explosionParticles = [];
+        for (let i = 0; i < 20; i++) {
+            this.explosionParticles.push({
+                x: this.player.x + this.player.width / 2,
+                y: this.player.y + this.player.height / 2,
+                vx: (Math.random() - 0.5) * 10,
+                vy: (Math.random() - 0.5) * 10,
+                size: Math.random() * 5 + 2
+            });
+        }
+        
         this.sounds.play('playerExplosion');
+        
+        // Make player temporarily invincible
+        this.invincibleTimer = 120;
+        
+        // Reset player position
+        setTimeout(() => {
+            this.isExploding = false;
+            this.player.x = this.canvas.width / 2 - this.player.width / 2;
+        }, 2000);
     }
 
     async update() {
@@ -450,6 +473,13 @@ class Game {
     }
 
     async addHighScore(initials) {
+        // Ensure score is not zero
+        if (this.score <= 0) {
+            console.log('Preventing zero score from being added to high scores');
+            this.showHighScores = true;
+            return;
+        }
+
         const success = await addHighScore(initials.toUpperCase(), this.score, this.level);
         if (success) {
             await this.loadHighScores(); // Reload the high scores
@@ -471,8 +501,17 @@ class Game {
 
         this.ctx.font = '24px monospace';
         this.highScores.forEach((score, index) => {
-            const text = `${index + 1}. ${score.initials.padEnd(3, ' ')}  ${score.score.toString().padStart(6, '0')}  LVL ${score.level}`;
-            this.ctx.fillText(text, this.canvas.width / 2, 180 + (index * 50));
+            // Score line
+            const scoreText = `${index + 1}. ${score.initials.padEnd(3, ' ')}  ${score.score.toString().padStart(6, '0')}  LVL ${score.level}`;
+            this.ctx.fillText(scoreText, this.canvas.width / 2, 180 + (index * 60));
+            
+            // Date and time line (smaller font)
+            this.ctx.font = '16px monospace';
+            this.ctx.fillStyle = '#888888';
+            const dateText = `${score.formattedDate} at ${score.formattedTime}`;
+            this.ctx.fillText(dateText, this.canvas.width / 2, 180 + (index * 60) + 25);
+            this.ctx.font = '24px monospace';
+            this.ctx.fillStyle = 'white';
         });
 
         // Loading message if no scores yet
