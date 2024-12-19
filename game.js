@@ -1,3 +1,5 @@
+import { getHighScores, addHighScore } from './supabase.js';
+
 class Game {
     constructor() {
         this.canvas = document.getElementById('gameCanvas');
@@ -23,9 +25,10 @@ class Game {
         this.showHighScores = false;
         this.enteringInitials = false;
         this.currentInitials = '';
+        this.highScores = [];
         
-        // Load high scores from localStorage
-        this.highScores = JSON.parse(localStorage.getItem('highScores')) || [];
+        // Load high scores from Supabase
+        this.loadHighScores();
         
         // Initialize sound effects
         this.sounds = new SoundEffects();
@@ -105,6 +108,10 @@ class Game {
         });
     }
     
+    async loadHighScores() {
+        this.highScores = await getHighScores();
+    }
+
     initializeGame() {
         this.score = 0;
         this.lives = 3;
@@ -348,7 +355,7 @@ class Game {
         this.sounds.play('playerExplosion');
     }
 
-    update() {
+    async update() {
         if (this.showTitleScreen || this.gameOver || this.showHighScores) {
             this.handleGamepad();
             return;
@@ -430,54 +437,55 @@ class Game {
         }
     }
 
-    checkCollisions() {
-        // Player bullets with enemies
-        this.player.bullets.forEach((bullet, bulletIndex) => {
-            this.enemies.forEach((enemy, enemyIndex) => {
-                if (this.checkCollision(bullet, enemy)) {
-                    this.enemies.splice(enemyIndex, 1);
-                    this.player.bullets.splice(bulletIndex, 1);
-                    this.score += 10;
-                    document.getElementById('scoreElement').textContent = this.score;
-                    this.sounds.play('explosion');
-                }
-            });
+    async checkHighScore() {
+        // Refresh high scores first
+        await this.loadHighScores();
+        
+        if (this.highScores.length < 5 || this.score > this.highScores[this.highScores.length - 1].score) {
+            this.enteringInitials = true;
+            this.currentInitials = '';
+            return true;
+        }
+        return false;
+    }
+
+    async addHighScore(initials) {
+        const success = await addHighScore(initials.toUpperCase(), this.score, this.level);
+        if (success) {
+            await this.loadHighScores(); // Reload the high scores
+            this.enteringInitials = false;
+            this.showHighScores = true;
+        } else {
+            console.error('Failed to save high score');
+        }
+    }
+
+    drawHighScores() {
+        this.ctx.fillStyle = 'black';
+        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+        this.ctx.fillStyle = 'white';
+        this.ctx.font = 'bold 40px monospace';
+        this.ctx.textAlign = 'center';
+        this.ctx.fillText('HIGH SCORES', this.canvas.width / 2, 100);
+
+        this.ctx.font = '24px monospace';
+        this.highScores.forEach((score, index) => {
+            const text = `${index + 1}. ${score.initials.padEnd(3, ' ')}  ${score.score.toString().padStart(6, '0')}  LVL ${score.level}`;
+            this.ctx.fillText(text, this.canvas.width / 2, 180 + (index * 50));
         });
 
-        // Enemy bullets with player
-        if (!this.invincibleTimer && !this.isExploding) {
-            this.enemyBullets.forEach((bullet, index) => {
-                if (this.checkCollision(bullet, this.player)) {
-                    this.enemyBullets.splice(index, 1);
-                    this.playerHit();
-                }
-            });
+        // Loading message if no scores yet
+        if (this.highScores.length === 0) {
+            this.ctx.fillText('Loading scores...', this.canvas.width / 2, 180);
         }
-        
-        // Bullets with barriers
-        [...this.player.bullets, ...this.enemyBullets].forEach((bullet, bulletIndex) => {
-            this.barriers.forEach((barrier, barrierIndex) => {
-                if (this.checkCollision(bullet, barrier)) {
-                    barrier.health--;
-                    if (barrier.health <= 0) {
-                        this.barriers.splice(barrierIndex, 1);
-                    }
-                    if (bullet.y < barrier.y) { // Player bullet
-                        this.player.bullets.splice(this.player.bullets.indexOf(bullet), 1);
-                    } else { // Enemy bullet
-                        this.enemyBullets.splice(this.enemyBullets.indexOf(bullet), 1);
-                    }
-                    this.sounds.play('hit');
-                }
-            });
-        });
-        
-        // Check if enemies reached the player
-        this.enemies.forEach(enemy => {
-            if (enemy.y + enemy.height >= this.player.y) {
-                this.gameOver = true;
-            }
-        });
+
+        this.ctx.font = '20px monospace';
+        if (this.gamepadIndex !== null) {
+            this.ctx.fillText('Press B to return', this.canvas.width / 2, this.canvas.height - 50);
+        } else {
+            this.ctx.fillText('Press ESC to return', this.canvas.width / 2, this.canvas.height - 50);
+        }
     }
     
     drawTitleScreen() {
@@ -540,7 +548,8 @@ class Game {
         if (this.gamepadIndex !== null) {
             ctx.font = '16px monospace';
             ctx.fillStyle = 'gray';
-            ctx.fillText('Controller: A to Start, Y for High Scores', this.canvas.width / 2, this.canvas.height * 0.75 + 30);
+            ctx.fillText('Controller: A to Start, Y for High Scores', 
+                this.canvas.width / 2, this.canvas.height * 0.75 + 30);
         }
     }
 
@@ -635,56 +644,56 @@ class Game {
         requestAnimationFrame(() => this.gameLoop());
     }
 
-    checkHighScore() {
-        if (this.highScores.length < 5 || this.score > this.highScores[this.highScores.length - 1].score) {
-            this.enteringInitials = true;
-            this.currentInitials = '';
-            return true;
-        }
-        return false;
-    }
-
-    addHighScore(initials) {
-        const newScore = {
-            initials: initials.toUpperCase(),
-            score: this.score,
-            level: this.level
-        };
-        
-        this.highScores.push(newScore);
-        this.highScores.sort((a, b) => b.score - a.score);
-        if (this.highScores.length > 5) {
-            this.highScores.pop();
-        }
-        
-        localStorage.setItem('highScores', JSON.stringify(this.highScores));
-        this.enteringInitials = false;
-        this.showHighScores = true;
-    }
-
-    drawHighScores() {
-        this.ctx.fillStyle = 'black';
-        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-
-        this.ctx.fillStyle = 'white';
-        this.ctx.font = 'bold 40px monospace';
-        this.ctx.textAlign = 'center';
-        this.ctx.fillText('HIGH SCORES', this.canvas.width / 2, 100);
-
-        this.ctx.font = '24px monospace';
-        this.highScores.forEach((score, index) => {
-            const text = `${index + 1}. ${score.initials.padEnd(3, ' ')}  ${score.score.toString().padStart(6, '0')}  LVL ${score.level}`;
-            this.ctx.fillText(text, this.canvas.width / 2, 180 + (index * 50));
+    checkCollisions() {
+        // Player bullets with enemies
+        this.player.bullets.forEach((bullet, bulletIndex) => {
+            this.enemies.forEach((enemy, enemyIndex) => {
+                if (this.checkCollision(bullet, enemy)) {
+                    this.enemies.splice(enemyIndex, 1);
+                    this.player.bullets.splice(bulletIndex, 1);
+                    this.score += 10;
+                    document.getElementById('scoreElement').textContent = this.score;
+                    this.sounds.play('explosion');
+                }
+            });
         });
 
-        this.ctx.font = '20px monospace';
-        if (this.gamepadIndex !== null) {
-            this.ctx.fillText('Press B to return', this.canvas.width / 2, this.canvas.height - 50);
-        } else {
-            this.ctx.fillText('Press ESC to return', this.canvas.width / 2, this.canvas.height - 50);
+        // Enemy bullets with player
+        if (!this.invincibleTimer && !this.isExploding) {
+            this.enemyBullets.forEach((bullet, index) => {
+                if (this.checkCollision(bullet, this.player)) {
+                    this.enemyBullets.splice(index, 1);
+                    this.playerHit();
+                }
+            });
         }
+        
+        // Bullets with barriers
+        [...this.player.bullets, ...this.enemyBullets].forEach((bullet, bulletIndex) => {
+            this.barriers.forEach((barrier, barrierIndex) => {
+                if (this.checkCollision(bullet, barrier)) {
+                    barrier.health--;
+                    if (barrier.health <= 0) {
+                        this.barriers.splice(barrierIndex, 1);
+                    }
+                    if (bullet.y < barrier.y) { // Player bullet
+                        this.player.bullets.splice(this.player.bullets.indexOf(bullet), 1);
+                    } else { // Enemy bullet
+                        this.enemyBullets.splice(this.enemyBullets.indexOf(bullet), 1);
+                    }
+                    this.sounds.play('hit');
+                }
+            });
+        });
+        
+        // Check if enemies reached the player
+        this.enemies.forEach(enemy => {
+            if (enemy.y + enemy.height >= this.player.y) {
+                this.gameOver = true;
+            }
+        });
     }
-
+    
     drawInitialsEntry() {
         this.ctx.fillStyle = 'white';
         this.ctx.font = '40px monospace';
